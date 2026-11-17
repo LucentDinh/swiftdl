@@ -480,6 +480,28 @@ impl DownloadManager {
     }
 
     /// Opens a "New download" window for `inc`.
+    /// The videos picked from a playlist, each as its own download in the chosen
+    /// shape ("high", "best" or "audio"). Returns how many were added.
+    pub fn add_playlist(self: &Arc<Self>, entries: &[(String, String)], mode: &str) -> usize {
+        let (format, ext, category) = crate::media::playlist_format(mode);
+        for (url, title) in entries {
+            self.add(AddRequest {
+                url: url.clone(),
+                filename: format!("{}.{ext}", clean_name(title)),
+                dir: self.default_dir(category),
+                headers: vec![],
+                start: true,
+                window: None,
+                format: Some(format.to_string()),
+                size: None,
+                torrent_files: None,
+                checksum: None,
+                mirrors: vec![],
+            });
+        }
+        entries.len()
+    }
+
     /// A video link: opens the New download window to choose a quality, unless
     /// Settings says to start straight away with a default.
     pub fn new_download_window(self: &Arc<Self>, inc: Incoming) {
@@ -1070,7 +1092,7 @@ fn pick_quality(qs: &[crate::media::Quality], mode: &str) -> Option<usize> {
 }
 
 /// A file name from a video's title: no characters Windows refuses, no extension left over.
-fn clean_name(title: &str) -> String {
+pub fn clean_name(title: &str) -> String {
     let t = title.trim();
     let t = match t.rsplit_once('.') {
         Some((stem, ext)) if (2..=4).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()) && !stem.is_empty() => stem,

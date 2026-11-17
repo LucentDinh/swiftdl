@@ -41,6 +41,84 @@ pub fn is_media_url(url: &str) -> bool {
     SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")))
 }
 
+/// Spotify's music is copy-protected, so no downloader can save it.
+pub const SPOTIFY_MSG: &str = "Spotify's music is copy-protected, so SwiftDL can't download it.";
+
+pub fn is_spotify(url: &str) -> bool {
+    url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase())).is_some_and(|h| h == "spotify.com" || h.ends_with(".spotify.com"))
+}
+
+/// A YouTube playlist page (/playlist?list=...). A watch link that only carries
+/// `list=` is one video from a playlist and stays one video.
+pub fn is_playlist_url(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+    let youtube = host == "youtube.com" || host.ends_with(".youtube.com");
+    youtube && u.path() == "/playlist" && u.query_pairs().any(|(k, v)| k == "list" && !v.is_empty())
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistEntry {
+    pub url: String,
+    pub title: String,
+    pub duration: Option<f64>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Playlist {
+    pub title: String,
+    pub entries: Vec<PlaylistEntry>,
+}
+
+/// yt-dlp's flat playlist answer, without the videos that are gone.
+fn parse_playlist(v: &Value) -> Result<Playlist> {
+    let entries: Vec<PlaylistEntry> = v["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let title = e["title"].as_str()?.trim().to_string();
+            if title.is_empty() || title == "[Private video]" || title == "[Deleted video]" {
+                return None;
+            }
+            let url = match (e["url"].as_str(), e["id"].as_str()) {
+                (Some(u), _) if u.starts_with("http") => u.to_string(),
+                (_, Some(id)) => format!("https://www.youtube.com/watch?v={id}"),
+                _ => return None,
+            };
+            Some(PlaylistEntry { url, title, duration: e["duration"].as_f64() })
+        })
+        .take(500)
+        .collect();
+    if entries.is_empty() {
+        bail!("that playlist has no videos SwiftDL can download");
+    }
+    Ok(Playlist { title: v["title"].as_str().unwrap_or("Playlist").to_string(), entries })
+}
+
+/// The videos in a playlist, for the person to choose from.
+pub async fn playlist(client: &Client, url: &str, headers: Vec<(String, String)>) -> Result<Playlist> {
+    if is_spotify(url) {
+        bail!("{SPOTIFY_MSG}");
+    }
+    let tools = ensure_tools(client, &PROBE_NOTE, false).await?;
+    *PROBE_NOTE.lock().unwrap() = None;
+    let json = ytdlp_run(tools.ytdlp, url.to_string(), headers, false, &["--flat-playlist", "--yes-playlist"]).await?;
+    parse_playlist(&serde_json::from_slice(&json).context("yt-dlp gave an unexpected answer")?)
+}
+
+/// What a playlist choice means: the format, the file's extension and its category.
+/// Audio is the best AAC; video is up to 1080p or the best there is.
+pub fn playlist_format(mode: &str) -> (&'static str, &'static str, &'static str) {
+    match mode {
+        "audio" => ("ba[ext=m4a]/ba", "m4a", "Music"),
+        "best" => ("bv*+ba/b", "mp4", "Video"),
+        _ => ("bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b", "mp4", "Video"),
+    }
+}
+
 /// Live status text for a media download ("Merging video and audio").
 pub type Note = Arc<Mutex<Option<String>>>;
 
@@ -346,6 +424,9 @@ const PROBE_LIMIT: Duration = Duration::from_secs(90);
 /// Only if that comes back short (an error, or nothing above 480p) does it
 /// ask again with the runtime. The download itself always gets the runtime.
 pub async fn probe(client: &Client, url: &str, headers: Vec<(String, String)>) -> Result<MediaInfo> {
+    if is_spotify(url) {
+        bail!("{SPOTIFY_MSG}");
+    }
     let tools = ensure_tools(client, &PROBE_NOTE, false).await?;
     *PROBE_NOTE.lock().unwrap() = None;
     let quick = read_info(tools.ytdlp.clone(), url.to_string(), headers.clone(), false).await;
@@ -367,10 +448,15 @@ pub async fn probe(client: &Client, url: &str, headers: Vec<(String, String)>) -
 
 /// Runs `yt-dlp -J` and returns its JSON, giving up after PROBE_LIMIT.
 async fn ytdlp_json(ytdlp: PathBuf, url: String, headers: Vec<(String, String)>, with_js: bool) -> Result<Vec<u8>> {
+    ytdlp_run(ytdlp, url, headers, with_js, &["--no-playlist"]).await
+}
+
+/// `yt-dlp -J` with `mode` options (one video, or a flat list of a playlist's videos).
+async fn ytdlp_run(ytdlp: PathBuf, url: String, headers: Vec<(String, String)>, with_js: bool, mode: &'static [&'static str]) -> Result<Vec<u8>> {
     let url_for_log = url.clone();
     let out = tauri::async_runtime::spawn_blocking(move || -> Result<std::process::Output> {
         let mut cmd = if with_js { ytdlp_command(&ytdlp) } else { command(&ytdlp) };
-        cmd.args(["-J", "--no-playlist", "--no-warnings", "--socket-timeout", "20"]);
+        cmd.arg("-J").args(mode).args(["--no-warnings", "--socket-timeout", "20"]);
         add_headers(&mut cmd, &headers_for(&url, &headers, with_js));
         // Plain anonymous pipes, as the common Windows launchers make. Rust's own
         // `Stdio::piped()` is a named pipe, and on some PCs yt-dlp's Python can't
@@ -949,6 +1035,32 @@ mod tests {
     }
 
     #[test]
+    fn playlists_are_spotted_and_read() {
+        assert!(is_playlist_url("https://www.youtube.com/playlist?list=PLabc123"));
+        assert!(is_playlist_url("https://music.youtube.com/playlist?list=OLAK5uy"));
+        assert!(!is_playlist_url("https://www.youtube.com/watch?v=abc&list=PLabc123"), "one video from a playlist stays one video");
+        assert!(!is_playlist_url("https://www.youtube.com/playlist") && !is_playlist_url("https://vimeo.com/playlist?list=1"));
+        let v = serde_json::json!({ "title": "Mix", "entries": [
+            { "id": "aaa", "url": "https://www.youtube.com/watch?v=aaa", "title": "First", "duration": 235 },
+            { "id": "bbb", "title": "No address given", "duration": null },
+            { "id": "ccc", "title": "[Private video]" },
+            { "id": "ddd", "title": "[Deleted video]" },
+            { "url": "https://www.youtube.com/watch?v=eee", "title": "  Fifth  " },
+        ]});
+        let p = parse_playlist(&v).unwrap();
+        assert_eq!(p.title, "Mix");
+        assert_eq!(p.entries, vec![
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=aaa".into(), title: "First".into(), duration: Some(235.0) },
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=bbb".into(), title: "No address given".into(), duration: None },
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=eee".into(), title: "Fifth".into(), duration: None },
+        ]);
+        assert!(parse_playlist(&serde_json::json!({ "entries": [] })).is_err());
+        assert_eq!(playlist_format("audio").1, "m4a");
+        assert!(playlist_format("high").0.contains("height<=1080") && !playlist_format("best").0.contains("height"));
+        assert!(is_spotify("https://open.spotify.com/playlist/37i9") && !is_spotify("https://notspotify.com/x"));
+    }
+
+    #[test]
     fn finds_youtube_ids() {
         assert_eq!(super::youtube_id("https://www.youtube.com/watch?v=M5OCLifZK1w&list=RD").as_deref(), Some("M5OCLifZK1w"));
         assert_eq!(super::youtube_id("https://youtu.be/M5OCLifZK1w").as_deref(), Some("M5OCLifZK1w"));
@@ -1013,6 +1125,17 @@ mod live {
     /// `cargo test --release live_youtube -- --ignored --nocapture` with
     /// SWIFTDL_YT_URL and SWIFTDL_YT_OUT set. Downloads 1080p for real.
     /// Runs the same lookup the app does, for any URL in SWIFTDL_PROBE_URL.
+    /// SWIFTDL_PL_URL=https://www.youtube.com/playlist?list=... cargo test live_playlist -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_playlist() {
+        let url = std::env::var("SWIFTDL_PL_URL").unwrap();
+        let client = swiftdl_engine::build_client().unwrap();
+        let t = std::time::Instant::now();
+        let p = tauri::async_runtime::block_on(super::playlist(&client, &url, vec![])).unwrap();
+        println!("PLAYLIST {:?}: {} videos in {:.1}s; first: {:?}", p.title, p.entries.len(), t.elapsed().as_secs_f64(), p.entries.first());
+    }
+
     #[test]
     #[ignore]
     fn live_probe() {

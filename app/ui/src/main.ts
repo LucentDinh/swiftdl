@@ -788,6 +788,12 @@ function renderChips() {
 async function probe() {
   const url = $("add-url").value.trim();
   if (!/^(https?:\/\/|ftp:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); if (url) setState("error", "Paste a web link (http://, https:// or ftp://) or a magnet link"); else setState("idle"); return; }
+  // A playlist page: choose which videos, and video or audio.
+  if (await invoke("is_playlist_url", { url }).catch(() => false)) {
+    $("dlg-add").close();
+    openPlaylist(url);
+    return;
+  }
   // A Metalink lists several mirrors of one file: download from all of them.
   if (/\.(meta4|metalink)(\?|#|$)/i.test(url)) {
     try {
@@ -826,6 +832,44 @@ async function probe() {
     setState("error", `Couldn't reach that link: ${e}`);
   }
 }
+// ---------- playlists ----------
+type PlEntry = { url: string; title: string; duration: number | null };
+const pl = { items: [] as PlEntry[], picked: new Set<string>(), mode: "high" };
+const length = (s: number | null) => (s ? (s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`) : "");
+function renderPlaylist() {
+  $("pl-chips").querySelectorAll<HTMLElement>("[data-m]").forEach((c) => c.classList.toggle("on", c.dataset.m === pl.mode));
+  $("pl-list").innerHTML = pl.items.map((f) => `<label class="grab-row"><input type="checkbox" data-u="${esc(f.url)}"${pl.picked.has(f.url) ? " checked" : ""}><span class="gn" title="${esc(f.title)}">${esc(f.title)}</span><span class="gh">${length(f.duration)}</span></label>`).join("");
+  const n = pl.picked.size;
+  $("pl-go").disabled = !n;
+  $("pl-go").textContent = n ? `Download ${n} video${n === 1 ? "" : "s"}` : "Download";
+  $("pl-all").textContent = pl.items.length && pl.picked.size === pl.items.length ? "Select none" : "Select all";
+}
+async function openPlaylist(url: string) {
+  pl.items = []; pl.picked.clear(); pl.mode = "high";
+  $("pl-title").textContent = "";
+  $("pl-state").textContent = "Reading the playlist…";
+  renderPlaylist();
+  $("dlg-playlist").showModal();
+  try {
+    const info = await invoke("probe_playlist", { url });
+    pl.items = info.entries; pl.picked = new Set(info.entries.map((e) => e.url));
+    $("pl-title").textContent = info.title;
+    $("pl-state").textContent = `${info.entries.length} videos`;
+    renderPlaylist();
+  } catch (e) { $("pl-state").textContent = `Couldn't read that playlist: ${e}`; }
+}
+$("pl-x").onclick = () => $("dlg-playlist").close();
+$("pl-chips").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-m]"); if (b) { pl.mode = b.dataset.m!; renderPlaylist(); } });
+$("pl-list").addEventListener("change", (e) => { const i = target(e) as HTMLInputElement; if (i.dataset.u) { i.checked ? pl.picked.add(i.dataset.u) : pl.picked.delete(i.dataset.u); renderPlaylist(); } });
+$("pl-all").onclick = () => { pl.picked = pl.picked.size === pl.items.length ? new Set() : new Set(pl.items.map((e) => e.url)); renderPlaylist(); };
+$("pl-go").onclick = async () => {
+  const entries = pl.items.filter((e) => pl.picked.has(e.url)).map((e) => ({ url: e.url, title: e.title }));
+  const n = await invoke("add_playlist", { entries, mode: pl.mode }).catch(() => 0);
+  $("dlg-playlist").close();
+  if (state.view !== "all" && state.view !== "active") state.view = "all";
+  toast(`Adding ${n} download${n === 1 ? "" : "s"}`, "dl");
+};
+
 // ---------- find files on a page ----------
 type Found = { url: string; name: string };
 const grab = { all: [] as Found[], picked: new Set<string>(), cat: "File", q: "" };

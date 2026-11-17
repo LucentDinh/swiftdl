@@ -118,6 +118,24 @@
       </div>
     </form>
   </dialog>
+  <dialog id="dlg-playlist" class="modal composer grab">
+    <form method="dialog" id="form-playlist">
+      <div class="comp-top">
+        <span class="crumb"><img src="logo.svg" alt="" width="14" height="14">SwiftDL</span><i data-icon="chevron" class="crumb-sep"></i><span class="crumb-cur">Playlist</span>
+        <span class="grow"></span>
+        <button type="button" class="sq-btn" id="pl-x" title="Close (Esc)"><i data-icon="x"></i></button>
+      </div>
+      <div class="comp-url" id="pl-title" style="font-size:16px"></div>
+      <div class="comp-state" id="pl-state"></div>
+      <div class="chips" id="pl-chips"><button type="button" class="chip" data-m="high"><span>Video, up to 1080p</span></button><button type="button" class="chip" data-m="best"><span>Video, best available</span></button><button type="button" class="chip" data-m="audio"><span>Audio only</span></button></div>
+      <div class="grab-list" id="pl-list"></div>
+      <div class="comp-foot">
+        <button type="button" class="ghost-btn" id="pl-all">Select none</button>
+        <span class="grow"></span>
+        <button type="button" class="btn primary" id="pl-go" disabled>Download</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="dlg-settings" class="modal settings">
     <form method="dialog" id="form-settings">
       <nav class="set-nav" id="set-nav">

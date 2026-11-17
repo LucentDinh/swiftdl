@@ -6,6 +6,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Select several downloads** (Ctrl/Cmd+click, Shift+click, Ctrl+A) and remove,
+  pause or resume them together (#12).
+- **Skip the video window.** Settings > General > Video links: start straight
+  away at up to 1080p, the best available, or audio only (#17).
+- **YouTube playlists.** Paste a playlist link to choose which videos to take,
+  as video (up to 1080p or the best available) or as audio only (#17).
+  Spotify links say plainly that its music is copy-protected.
+- **HDR as its own quality choice** ("2160p HDR" next to "2160p") (#15). A plain
+  "2160p" used to pick the HDR stream on videos that have one.
+
 ### Fixed
 - **In-app update on Windows x64 installed the ARM64 installer**, which Windows
   refuses to run ("This app can't run on your PC"). The updater now picks the
