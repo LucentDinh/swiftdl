@@ -51,12 +51,12 @@ const HISTORY = 120;
 const LIMITS = [0, 256, 1024, 5120, 10240];
 interface State {
   version: string;
-  items: Item[]; settings: Settings | null; view: string; search: string; selected: number | null; pending: Incoming[];
+  items: Item[]; settings: Settings | null; view: string; search: string; selected: number | null; picked: Set<number>; pending: Incoming[];
   speedHist: Map<number, number[]>; totalHist: number[]; typesOpen: boolean; integration: IntegrationStatus | null;
 }
 const state: State = {
   version: "",
-  items: [], settings: null, view: "all", search: "", selected: null, pending: [],
+  items: [], settings: null, view: "all", search: "", selected: null, picked: new Set<number>(), pending: [],
   speedHist: new Map(), totalHist: [], typesOpen: true, integration: null,
 };
 const settings = (): Settings => state.settings as Settings;
@@ -202,7 +202,7 @@ function meta(it: Item) {
   }
 }
 function updateRow(el: RowEl, it: Item) {
-  el.classList.toggle("sel", state.selected === it.id);
+  el.classList.toggle("sel", state.selected === it.id || state.picked.has(it.id));
   set(el, 0, statusIcon(it));
   const e = ext(it.filename);
   set(el, 1, `<span class="r-name" title="${esc(it.filename)}">${esc(it.filename.replace(/\.[^.]+$/, "") || it.filename)}</span>${e ? `<span class="r-ext">${e}</span>` : ""}${it.status === "error" ? `<span class="r-err">${esc(it.error || "Failed")}</span>` : ""}`);
@@ -411,6 +411,7 @@ $("browser-list").addEventListener("click", (e) => { const b = target(e).closest
 
 function render() {
   if (state.selected != null && !byId(state.selected)) state.selected = null;
+  for (const id of [...state.picked]) if (!byId(id)) state.picked.delete(id);
   const list = renderList();
   renderNav();
   renderHeader(list);
@@ -457,6 +458,40 @@ function askDelete(it: Item | null | undefined) {
     toast(live ? "Download cancelled" : "Removed from list", "ok");
   };
   dlg.showModal();
+}
+// The downloads marked with Ctrl/Shift+click, or just the selected one.
+const chosen = (): Item[] => {
+  const ids = new Set(state.picked);
+  if (state.selected != null) ids.add(state.selected);
+  return state.items.filter((i) => ids.has(i.id));
+};
+function askDeleteMany(items: Item[]) {
+  if (items.length < 2) return askDelete(items[0]);
+  const dlg = $("dlg-delete");
+  const live = items.filter((i) => i.status !== "completed").length;
+  $("del-title").textContent = `Remove ${items.length} downloads?`;
+  $("del-text").textContent = live ? `${live} still running or waiting will stop and their partial data will be deleted. The rest will be removed from SwiftDL.` : `${items.length} downloads will be removed from SwiftDL.`;
+  $("del-ok").textContent = `Remove ${items.length}`;
+  $("del-files").checked = false;
+  $("del-files-row").hidden = live === items.length;
+  dlg.returnValue = "";
+  dlg.onclose = () => {
+    if (dlg.returnValue !== "ok") return;
+    call("remove", { ids: items.map((i) => i.id), deleteFiles: $("del-files").checked });
+    state.picked.clear();
+    toast(`Removed ${items.length} downloads`, "ok");
+  };
+  dlg.showModal();
+}
+function manyMenu(items: Item[], x: number, y: number) {
+  const ids = items.map((i) => i.id);
+  showMenu(x, y, [
+    { title: `${items.length} downloads selected` },
+    { icon: "pause", label: `Pause ${items.length}`, run: () => pause(ids) },
+    { icon: "play", label: `Resume ${items.length}`, run: () => resume(ids) },
+    "-",
+    { icon: "trash", label: `Remove ${items.length}…`, danger: true, run: () => askDeleteMany(items) },
+  ]);
 }
 function act(name: string, it: Item | null | undefined, anchor?: HTMLElement) {
   if (!it) return;
@@ -542,9 +577,22 @@ $("rows").addEventListener("mousedown", (e) => {
   const r = target(e).closest<HTMLElement>(".row"), it = r ? byId(Number(r.dataset.id)) : undefined;
   if (!it || e.button !== 0) return;
   if (e.detail === 2) { if (it.status === "completed") act("open", it); else toggle(it); return; }
+  // Ctrl/Cmd+click adds or removes one; Shift+click takes everything in between.
+  if (e.ctrlKey || e.metaKey) {
+    if (state.selected != null) state.picked.add(state.selected);
+    if (state.picked.has(it.id) && state.selected !== it.id) state.picked.delete(it.id); else state.picked.add(it.id);
+    state.selected = it.id;
+    render();
+    return;
+  }
+  if (e.shiftKey && state.selected != null) {
+    const ids = orderIds(), a = ids.indexOf(state.selected), b = ids.indexOf(it.id);
+    if (a >= 0 && b >= 0) { state.picked = new Set(ids.slice(Math.min(a, b), Math.max(a, b) + 1)); render(); return; }
+  }
+  state.picked.clear();
   select(it.id, false);
 });
-$("rows").addEventListener("contextmenu", (e) => { const r = target(e).closest<HTMLElement>(".row"); const it = r ? byId(Number(r.dataset.id)) : undefined; if (it) { e.preventDefault(); itemMenu(it, e.clientX, e.clientY); } });
+$("rows").addEventListener("contextmenu", (e) => { const r = target(e).closest<HTMLElement>(".row"); const it = r ? byId(Number(r.dataset.id)) : undefined; if (it && state.picked.size > 1 && state.picked.has(it.id)) { e.preventDefault(); manyMenu(chosen(), e.clientX, e.clientY); } else if (it) { e.preventDefault(); itemMenu(it, e.clientX, e.clientY); } });
 $("list").addEventListener("mousedown", (e) => { if (!target(e).closest<HTMLElement>(".row") && !target(e).closest<HTMLElement>(".ghead") && !target(e).closest<HTMLElement>(".empty") && state.selected != null) { state.selected = null; render(); } });
 $("inspector").addEventListener("click", (e) => {
   const b = target(e).closest<HTMLElement>("[data-ins]");
@@ -587,17 +635,18 @@ document.addEventListener("keydown", (e) => {
   const it = byId(state.selected);
   if (mod && k.toLowerCase() === "n") { e.preventDefault(); openComposer(); }
   else if (mod && k === ",") { e.preventDefault(); openSettings(); }
+  else if (mod && k.toLowerCase() === "a") { e.preventDefault(); state.picked = new Set(orderIds()); render(); }
   else if (mod) return;
   else if (k === "ArrowDown" || k === "j") { e.preventDefault(); move(1); }
   else if (k === "ArrowUp" || k === "k") { e.preventDefault(); move(-1); }
   else if (k === " ") { e.preventDefault(); toggle(it); }
   else if (k === "Enter" && it) { e.preventDefault(); if (it.status === "completed") act("open", it); else toggle(it); }
-  else if ((k === "Delete" || k === "Backspace") && it) { e.preventDefault(); askDelete(it); }
+  else if ((k === "Delete" || k === "Backspace") && (it || state.picked.size)) { e.preventDefault(); askDeleteMany(chosen()); }
   else if (k === "o" && it) act("folder", it);
   else if (k === "c" && it) act("copy", it);
   else if (k === "n") openComposer();
   else if (k === "/") { e.preventDefault(); openPalette(); }
-  else if (k === "Escape") { state.selected = null; render(); }
+  else if (k === "Escape") { state.selected = null; state.picked.clear(); render(); }
 });
 
 const firstUrl = (t: string | null | undefined) => (t || "").split(/\s+/).find((s) => /^(https?:\/\/|magnet:\?)\S+$/i.test(s));
