@@ -6,6 +6,21 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **In-app update on Windows x64 installed the ARM64 installer**, which Windows
+  refuses to run ("This app can't run on your PC"). The updater now picks the
+  installer for the PC's own CPU, and the ARM64 installer is named
+  `..._arm64_installer.exe` so older versions can't pick it by mistake.
+- The New download window was cut off at the bottom since 0.4.0 added the
+  SHA-256 row (#14). It starts taller and resizes more reliably.
+- Firefox-based browsers (Zen, LibreWolf, Waterfox, Floorp, Mullvad) are
+  recognised as Firefox, so SwiftDL shows them as connected (#18).
+- macOS: yt-dlp's Python.framework was reported "damaged" on YouTube pages
+  (#21). SwiftDL now clears macOS's quarantine mark from its tools folder.
+  Not tested on a Mac.
+- The extension popup says why it can't reach SwiftDL, for example when only
+  the .exe was copied and not installed (#16).
+
 ## [0.4.1] - 2026-11-14
 
 ### Changed

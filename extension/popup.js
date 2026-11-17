@@ -46,6 +46,13 @@ async function main() {
     $("status").className = `status ${r?.ok ? "ok" : "off"}`;
     $("status").querySelector("span").textContent = r?.ok ? "Connected" : "Not connected";
     $("missing").hidden = !!r?.ok;
+    if (!r?.ok) {
+      const e = String(r?.error || "");
+      // The browser's own words, in plain terms.
+      $("why").textContent = /not found|forbidden|not allowed/i.test(e)
+        ? "This browser can't find SwiftDL's helper. Install SwiftDL with its installer (not just the .exe file), open it once, then reload this extension."
+        : e ? `The browser said: ${e}` : "Open the app once. If it's already open, restart the browser.";
+    }
     $("main").hidden = !r?.ok;
     $("open").hidden = !r?.ok;
   });

@@ -24,10 +24,14 @@ const view = $("view");
 const fit = () => {
   if (!win || !LogicalSize) return;
   // The card plus the 16px transparent margin on each side (for its shadow).
-  const h = Math.ceil($("root").getBoundingClientRect().height) + 32;
-  win.setSize(new LogicalSize(552, Math.min(780, h)));
+  const root = $("root");
+  const h = Math.ceil(Math.max(root.getBoundingClientRect().height, root.scrollHeight)) + 32;
+  // A resize that fails (or lands before the layout settles) must not leave the buttons cut off.
+  Promise.resolve(win.setSize(new LogicalSize(552, Math.min(780, h)))).catch(() => setTimeout(fit, 400));
 };
 new ResizeObserver(fit).observe($("root"));
+// Again once the page and fonts have settled; some screens report their size late.
+window.addEventListener("load", () => [100, 400, 1200].forEach((t) => setTimeout(fit, t)));
 const setTitle = (t: string) => { $("w-title").textContent = t; document.title = t; win?.setTitle(t); };
 
 $("w-min").onclick = () => win?.minimize();

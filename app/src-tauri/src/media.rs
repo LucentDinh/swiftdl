@@ -91,6 +91,17 @@ struct Tools {
     ffmpeg: Option<PathBuf>,
 }
 
+/// macOS marks files written by a program that was itself downloaded in a
+/// browser, and a program launched from the browser's extension inherits that.
+/// yt-dlp then unpacks its Python.framework into a quarantined folder and macOS
+/// reports it "damaged" (#21). Clearing the mark from our tools folder avoids it.
+#[cfg(target_os = "macos")]
+fn strip_quarantine() {
+    let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(tools_dir()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+#[cfg(not(target_os = "macos"))]
+fn strip_quarantine() {}
+
 /// Downloads yt-dlp (and ffmpeg on Windows) if they're missing.
 async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result<Tools> {
     let _guard = TOOLS.lock().await;
@@ -104,8 +115,10 @@ async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&ytdlp, std::fs::Permissions::from_mode(0o755))?;
         }
+        strip_quarantine();
         stamp_update();
     } else {
+        strip_quarantine();
         update_in_background(&ytdlp);
     }
     if need_ffmpeg && ffmpeg_dir().is_none() && cfg!(windows) {
