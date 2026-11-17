@@ -922,7 +922,9 @@ function nextPending() {
 // ---------- settings ----------
 // Interface size: the whole window scales (the download windows keep their size).
 const applyScale = (pct?: number) => { document.documentElement.style.zoom = String((pct && pct >= 80 && pct <= 160 ? pct : 100) / 100); };
-let setScale = 100, setDebridProvider = "realdebrid";
+let setScale = 100, setDebridProvider = "realdebrid", setVideoDef = "ask";
+function renderVideoDef() { $("set-videodef").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setVideoDef)); }
+$("set-videodef").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setVideoDef = b.dataset.v!; renderVideoDef(); } });
 // The local API needs a secret: make one when it is turned on without one.
 const apiHint = () => { $("set-api-hint").textContent = `Web remote: http://127.0.0.1:${$("set-api-port").value || 6800}   ·   For tools: /jsonrpc`; };
 $("set-api").addEventListener("change", () => {
@@ -995,6 +997,8 @@ function openSettings(tab = "general") {
   renderDebridProvider();
   setScale = s.uiScale || 100;
   renderScale();
+  setVideoDef = s.videoDefault || "ask";
+  renderVideoDef();
   $("set-api").checked = s.apiEnabled;
   $("set-api-port").value = String(s.apiPort || 6800);
   $("set-api-secret").value = s.apiSecret || "";
@@ -1052,6 +1056,7 @@ $("form-settings").addEventListener("submit", async (e) => {
     debridProvider: setDebridProvider,
     debridToken: $("set-debrid").value.trim(),
     uiScale: setScale,
+    videoDefault: setVideoDef,
     apiEnabled: $("set-api").checked && !!$("set-api-secret").value.trim(),
     apiPort: clamp($("set-api-port").value, 1024, 65535, 6800),
     apiSecret: $("set-api-secret").value.trim(),

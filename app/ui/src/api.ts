@@ -69,6 +69,8 @@ export interface Settings {
   debridToken: string;
   /** Interface size in percent (90-150). */
   uiScale: number;
+  /** "ask", "high" (best up to 1080p), "best" or "audio". */
+  videoDefault: string;
   /** A local aria2-compatible API; applies after a restart. */
   apiEnabled: boolean;
   apiPort: number;
