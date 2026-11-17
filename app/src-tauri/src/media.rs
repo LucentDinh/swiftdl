@@ -518,24 +518,39 @@ fn qualities(info: &Value) -> Vec<Quality> {
     let mut heights: Vec<u64> = videos.iter().filter_map(|f| f["height"].as_u64()).collect();
     heights.sort_unstable_by(|a, b| b.cmp(a));
     heights.dedup();
+    // HDR is its own choice: on a video with HDR10 or HLG, a plain "2160p" used
+    // to pick the HDR stream, which looks washed out on an ordinary screen.
+    let is_hdr = |f: &Value| f["dynamic_range"].as_str().is_some_and(|d| d != "SDR");
     let mut list: Vec<Quality> = heights
         .into_iter()
-        .map(|h| {
+        .flat_map(|h| {
             let at: Vec<&&Value> = videos.iter().filter(|f| f["height"].as_u64() == Some(h)).collect();
-            let best = at.iter().copied().max_by(|a, b| tbr(a).total_cmp(&tbr(b))).copied();
-            let fps = at.iter().filter_map(|f| f["fps"].as_f64()).fold(0.0, f64::max);
-            let progressive = best.is_some_and(|f| has(f, "acodec"));
-            let size = best.and_then(size_of).map(|v| if progressive { v } else { v + audio_size.unwrap_or(0) });
-            Quality {
-                label: if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") },
-                // H.264 + AAC first: it plays everywhere. AV1/VP9 only
-                // where YouTube has nothing else (1440p and 4K).
-                format: format!(
-                    "bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b"
-                ),
-                ext: "mp4".into(),
-                size,
+            let hdr: Vec<&&Value> = at.iter().copied().filter(|f| is_hdr(f)).collect();
+            let sdr: Vec<&&Value> = at.iter().copied().filter(|f| !is_hdr(f)).collect();
+            let entry = |set: &Vec<&&Value>, hdr_label: bool, format: String| -> Quality {
+                let best = set.iter().copied().max_by(|a, b| tbr(a).total_cmp(&tbr(b))).copied();
+                let fps = set.iter().filter_map(|f| f["fps"].as_f64()).fold(0.0, f64::max);
+                let progressive = best.is_some_and(|f| has(f, "acodec"));
+                let size = best.and_then(size_of).map(|v| if progressive { v } else { v + audio_size.unwrap_or(0) });
+                let base = if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") };
+                Quality { label: if hdr_label { format!("{base} HDR") } else { base }, format, ext: "mp4".into(), size }
+            };
+            // H.264 + AAC first: it plays everywhere. AV1/VP9 only where YouTube has
+            // nothing else (1440p and 4K). Where HDR exists, the plain choice stays SDR.
+            let plain = if hdr.is_empty() {
+                format!("bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b")
+            } else {
+                format!("bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}][dynamic_range=?SDR]+ba[ext=m4a]/bv*[height={h}][dynamic_range=?SDR]+ba/b[height={h}]/bv*[height<={h}][dynamic_range=?SDR]+ba/b")
+            };
+            let hdr_format = format!("bv*[height={h}][dynamic_range~=\"HDR|HLG|DV\"]+ba[ext=m4a]/bv*[height={h}][dynamic_range~=\"HDR|HLG|DV\"]+ba");
+            let mut out = vec![];
+            if !hdr.is_empty() {
+                out.push(entry(&hdr, true, hdr_format));
             }
+            if !sdr.is_empty() || hdr.is_empty() {
+                out.push(entry(if sdr.is_empty() { &at } else { &sdr }, false, plain));
+            }
+            out
         })
         .collect();
     if let Some(a) = best_audio {
@@ -914,6 +929,23 @@ mod tests {
     fn expired_stream_links_are_explained() {
         let e = "ERROR: [generic] 82134615: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)";
         assert!(super::last_error(e).unwrap().starts_with("The site no longer gives out this stream link"));
+    }
+
+    #[test]
+    fn hdr_is_its_own_choice() {
+        let info = serde_json::json!({ "formats": [
+            { "format_id": "313", "height": 2160, "vcodec": "vp9", "acodec": "none", "dynamic_range": "SDR", "tbr": 9000.0, "filesize": 400, "fps": 24.0 },
+            { "format_id": "701", "height": 2160, "vcodec": "av01.0.12M.10", "acodec": "none", "dynamic_range": "HDR10", "tbr": 12000.0, "filesize": 600, "fps": 24.0 },
+            { "format_id": "137", "height": 1080, "vcodec": "avc1.640028", "acodec": "none", "dynamic_range": "SDR", "tbr": 4000.0, "filesize": 100, "fps": 24.0 },
+            { "format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "tbr": 128.0, "filesize": 10 },
+        ]});
+        let q = super::qualities(&info);
+        let labels: Vec<&str> = q.iter().map(|q| q.label.as_str()).collect();
+        assert_eq!(labels, ["2160p HDR", "2160p", "1080p", "Audio only"]);
+        assert!(q[0].format.contains("dynamic_range~="), "the HDR choice asks for HDR streams");
+        assert!(q[1].format.contains("dynamic_range=?SDR"), "the plain 2160p must not fall back to HDR");
+        assert!(!q[2].format.contains("dynamic_range"), "a height with no HDR keeps the old selector");
+        assert_eq!((q[0].size, q[1].size), (Some(610), Some(410)));
     }
 
     #[test]

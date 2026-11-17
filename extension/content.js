@@ -244,17 +244,22 @@
     const m4a = audios.filter((f) => f.mime.startsWith("audio/mp4"));
     const audioSize = Math.max(0, ...(m4a.length ? m4a : audios).map((f) => f.size));
     const heights = [...new Set(videos.map((f) => f.height))].sort((a, b) => b - a);
-    const list = heights.map((h) => {
-      const at = videos.filter((f) => f.height === h);
-      const best = at.reduce((a, b) => (b.bitrate > a.bitrate ? b : a));
-      const fps = Math.max(...at.map((f) => f.fps));
-      return {
-        label: fps > 30.5 ? `${h}p${Math.round(fps)}` : `${h}p`,
-        format: `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}]+ba[ext=m4a]/bv*[height=${h}]+ba/b[height=${h}]/bv*[height<=${h}]+ba/b`,
-        ext: "mp4",
-        size: best.size ? best.size + audioSize : null,
-      };
-    });
+    const list = [];
+    // HDR is its own choice (same selectors as the app's own lookup): a plain
+    // "2160p" would otherwise pick the HDR stream on a video that has one.
+    const entry = (set, h, hdr, format) => {
+      const best = set.reduce((a, b) => (b.bitrate > a.bitrate ? b : a));
+      const fps = Math.max(...set.map((f) => f.fps));
+      return { label: `${h}p${fps > 30.5 ? Math.round(fps) : ""}${hdr ? " HDR" : ""}`, format, ext: "mp4", size: best.size ? best.size + audioSize : null };
+    };
+    for (const h of heights) {
+      const at = videos.filter((f) => f.height === h), hdr = at.filter((f) => f.hdr), sdr = at.filter((f) => !f.hdr);
+      const plain = hdr.length
+        ? `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}][dynamic_range=?SDR]+ba[ext=m4a]/bv*[height=${h}][dynamic_range=?SDR]+ba/b[height=${h}]/bv*[height<=${h}][dynamic_range=?SDR]+ba/b`
+        : `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}]+ba[ext=m4a]/bv*[height=${h}]+ba/b[height=${h}]/bv*[height<=${h}]+ba/b`;
+      if (hdr.length) list.push(entry(hdr, h, true, `bv*[height=${h}][dynamic_range~="HDR|HLG|DV"]+ba[ext=m4a]/bv*[height=${h}][dynamic_range~="HDR|HLG|DV"]+ba`));
+      if (sdr.length || !hdr.length) list.push(entry(sdr.length ? sdr : at, h, false, plain));
+    }
     if (audios.length) list.push({ label: "Audio only", format: "ba[ext=m4a]/ba", ext: m4a.length ? "m4a" : "webm", size: audioSize || null });
     return list;
   }

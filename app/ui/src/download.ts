@@ -178,7 +178,7 @@ async function mediaView(token: number, inc: Incoming, settings: Settings, heade
     $("c-q").innerHTML = `<select id="c-qs">${info.qualities.map((q, i) => `<option value="${i}">${esc(q.label)}${q.size ? ` · ${bytes(q.size)}` : ""}</option>`).join("")}</select>`;
     // Default to the best quality up to 1080p: 4K files are huge, and
     // they're one click away.
-    const preferred = known && inc.pick != null ? inc.pick : info.qualities.findIndex((q) => /^\d+p/.test(q.label) && parseInt(q.label) <= 1080);
+    const preferred = known && inc.pick != null ? inc.pick : info.qualities.findIndex((q) => /^\d+p/.test(q.label) && parseInt(q.label) <= 1080 && !/HDR/.test(q.label));
     $("c-qs").value = String(Math.max(0, preferred));
     $("c-qs").onchange = applyQuality;
     styledSelect($("c-qs") as HTMLSelectElement);
