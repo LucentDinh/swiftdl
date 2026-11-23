@@ -103,6 +103,7 @@ export interface AddRequest {
   url: string; filename: string; dir: string; headers?: Header[]; start: boolean;
   window?: string | null; format?: string | null; size?: number | null; torrentFiles?: number[] | null;
   checksum?: string | null;
+  mirrors?: string[];
 }
 
 type Ids = { ids: number[] };
