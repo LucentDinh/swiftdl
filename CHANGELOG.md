@@ -6,6 +6,24 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-23
+
+### Added
+- **Mirrors field** in the New download window: paste other links to the same
+  file and the parts are shared between all of them (#23).
+
+### Fixed
+- **The browser's own download box showed next to SwiftDL's window.** The
+  extension now drops the browser's download at once; if SwiftDL can't be
+  reached, the browser downloads the file itself.
+- **"8 connections" while the server let only one through.** Connections are
+  counted only while data is arriving, and the New download window says "up
+  to 8".
+- **Linux: the New download window opened behind other windows** (#24). It now
+  stays on top and asks the desktop to point at it.
+- **macOS: "Python.framework is damaged"** (#21). yt-dlp now runs from an
+  unpacked copy whose quarantine mark is cleared. Untested on a Mac.
+
 ## [0.4.2] - 2026-11-18
 
 ### Added
